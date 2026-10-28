@@ -1,4 +1,3 @@
-
 from math import isfinite
 from threading import Lock
 
@@ -166,6 +165,33 @@ PAGE = """
         .balance-row span {
             color: #687386;
         }
+
+        .demo-box {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f4f7ff;
+            border: 1px solid #d9e3ff;
+            border-radius: 10px;
+        }
+
+        .message {
+            margin-top: 12px;
+            padding: 12px;
+            border-radius: 8px;
+            display: none;
+        }
+
+        .message.success {
+            display: block;
+            background: #edf8f0;
+            color: #176b3a;
+        }
+
+        .message.failure {
+            display: block;
+            background: #fff0f0;
+            color: #b42318;
+        }
     </style>
 </head>
 
@@ -237,14 +263,33 @@ PAGE = """
         </div>
 
         <p class="subtitle">
-            This balance decreases when the hardware dispenses coins.
-            Bill transactions are not displayed.
+            This balance decreases after a successful exchange transaction.
+            The control below is a software demo and does not dispense real coins.
         </p>
+
+        <div class="demo-box">
+            <h3>Test Coin Exchange (Demo)</h3>
+            <p class="subtitle">Use this while the physical hardware is not connected.</p>
+            <form id="exchange-form">
+                <label for="exchange-amount">Amount to exchange (₱):</label>
+                <input id="exchange-amount" name="amount" type="number"
+                       min="0.01" step="0.01" value="50.00" required>
+                <button id="exchange-button" type="submit">Test Exchange</button>
+            </form>
+            <div id="exchange-message" class="message" role="status" aria-live="polite"></div>
+        </div>
     </div>
 
 </div>
 
 <script>
+function formatPeso(value) {
+    return "₱" + Number(value).toLocaleString("en-PH", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+    });
+}
+
 async function updateBalance() {
     try {
         const response = await fetch("/api/balance");
@@ -252,19 +297,65 @@ async function updateBalance() {
 
         const data = await response.json();
 
-        const formatted = "₱" + Number(
-            data.remaining_coin_balance
-        ).toLocaleString("en-PH", {
-            minimumFractionDigits: 2,
-            maximumFractionDigits: 2
-        });
-
+        const formatted = formatPeso(data.remaining_coin_balance);
         document.getElementById("balance").textContent = formatted;
         document.getElementById("balance-small").textContent = formatted;
     } catch (error) {
         console.log("Unable to update coin balance.");
     }
 }
+
+document.getElementById("exchange-form").addEventListener("submit", async function(event) {
+    event.preventDefault();
+
+    const amountInput = document.getElementById("exchange-amount");
+    const button = document.getElementById("exchange-button");
+    const message = document.getElementById("exchange-message");
+    const amount = Number(amountInput.value);
+
+    message.className = "message";
+    message.textContent = "";
+
+    if (!Number.isFinite(amount) || amount <= 0 || Math.round(amount * 100) !== amount * 100) {
+        message.className = "message failure";
+        message.textContent = "Enter a valid amount greater than zero, with up to 2 decimal places.";
+        return;
+    }
+
+    button.disabled = true;
+    button.textContent = "Processing...";
+
+    try {
+        const response = await fetch("/api/exchange", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ amount: amount })
+        });
+        const data = await response.json();
+
+        if (!response.ok || !data.success) {
+            message.className = "message failure";
+            message.textContent = data.message || "Exchange failed.";
+            if (data.remaining_coin_balance !== undefined) {
+                document.getElementById("balance").textContent = formatPeso(data.remaining_coin_balance);
+                document.getElementById("balance-small").textContent = formatPeso(data.remaining_coin_balance);
+            }
+            return;
+        }
+
+        document.getElementById("balance").textContent = formatPeso(data.remaining_coin_balance);
+        document.getElementById("balance-small").textContent = formatPeso(data.remaining_coin_balance);
+        message.className = "message success";
+        message.textContent = data.message + " New balance: " + formatPeso(data.remaining_coin_balance);
+        amountInput.value = "";
+    } catch (error) {
+        message.className = "message failure";
+        message.textContent = "Could not contact the server. Please try again.";
+    } finally {
+        button.disabled = false;
+        button.textContent = "Test Exchange";
+    }
+});
 
 // Refresh the displayed balance every 2 seconds.
 setInterval(updateBalance, 2000);
@@ -382,3 +473,4 @@ def record_exchange():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=False)
+
