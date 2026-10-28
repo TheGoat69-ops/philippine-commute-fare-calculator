@@ -278,6 +278,28 @@ PAGE = """
             </form>
             <div id="exchange-message" class="message" role="status" aria-live="polite"></div>
         </div>
+
+        <div class="demo-box">
+            <h3>Refund / Reset Coin Balance (Demo)</h3>
+            <p class="subtitle">Restore the machine's demo coin balance to its initial ₱10,000.00. This is a software reset only, not a real cash refund.</p>
+            <button id="refund-button" type="button">Refund / Reset to ₱10,000</button>
+            <div id="refund-message" class="message" role="status" aria-live="polite"></div>
+        </div>
+
+        <div class="demo-box">
+            <h3>Add Coins (Demo Top-Up)</h3>
+            <p class="subtitle">Simulation only. No real GCash payment is made.</p>
+            <form id="topup-form">
+                <label for="topup-amount">Choose top-up amount:</label>
+                <select id="topup-amount" name="amount" required>
+                    <option value="50">₱50.00</option>
+                    <option value="100">₱100.00</option>
+                    <option value="200">₱200.00</option>
+                </select>
+                <button id="topup-button" type="submit">Add Demo Coins</button>
+            </form>
+            <div id="topup-message" class="message" role="status" aria-live="polite"></div>
+        </div>
     </div>
 
 </div>
@@ -354,6 +376,72 @@ document.getElementById("exchange-form").addEventListener("submit", async functi
     } finally {
         button.disabled = false;
         button.textContent = "Test Exchange";
+    }
+});
+
+document.getElementById("refund-button").addEventListener("click", async function() {
+    const button = document.getElementById("refund-button");
+    const message = document.getElementById("refund-message");
+    message.className = "message";
+    message.textContent = "";
+    button.disabled = true;
+    button.textContent = "Resetting...";
+    try {
+        const response = await fetch("/api/refund-reset", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({})
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            message.className = "message failure";
+            message.textContent = data.message || "Refund/reset failed.";
+            return;
+        }
+        document.getElementById("balance").textContent = formatPeso(data.remaining_coin_balance);
+        document.getElementById("balance-small").textContent = formatPeso(data.remaining_coin_balance);
+        message.className = "message success";
+        message.textContent = data.message;
+    } catch (error) {
+        message.className = "message failure";
+        message.textContent = "Could not contact the server. Please try again.";
+    } finally {
+        button.disabled = false;
+        button.textContent = "Refund / Reset to ₱10,000";
+    }
+});
+
+document.getElementById("topup-form").addEventListener("submit", async function(event) {
+    event.preventDefault();
+    const amount = Number(document.getElementById("topup-amount").value);
+    const button = document.getElementById("topup-button");
+    const message = document.getElementById("topup-message");
+    message.className = "message";
+    message.textContent = "";
+    button.disabled = true;
+    button.textContent = "Adding...";
+    try {
+        const response = await fetch("/api/demo-topup", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ amount: amount })
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            message.className = "message failure";
+            message.textContent = data.message || "Demo top-up failed.";
+            return;
+        }
+        document.getElementById("balance").textContent = formatPeso(data.remaining_coin_balance);
+        document.getElementById("balance-small").textContent = formatPeso(data.remaining_coin_balance);
+        message.className = "message success";
+        message.textContent = data.message + " New balance: " + formatPeso(data.remaining_coin_balance);
+    } catch (error) {
+        message.className = "message failure";
+        message.textContent = "Could not contact the server. Please try again.";
+    } finally {
+        button.disabled = false;
+        button.textContent = "Add Demo Coins";
     }
 });
 
@@ -434,6 +522,48 @@ def get_balance():
     })
 
 
+# Demo-only top-up endpoint. It does not verify or accept real payments.
+@app.route("/api/demo-topup", methods=["POST"])
+def demo_topup():
+    data = request.get_json(silent=True) or {}
+    allowed_amounts = {50.0, 100.0, 200.0}
+    try:
+        amount = float(data.get("amount", 0))
+    except (ValueError, TypeError):
+        amount = 0
+
+    if amount not in allowed_amounts:
+        return jsonify({
+            "success": False,
+            "message": "Choose a valid demo top-up: ₱50, ₱100, or ₱200."
+        }), 400
+
+    with machine.lock:
+        machine.balance = round(machine.balance + amount, 2)
+        new_balance = machine.balance
+
+    return jsonify({
+        "success": True,
+        "message": f"Demo top-up of ₱{amount:.2f} added. No real payment was made.",
+        "remaining_coin_balance": new_balance
+    })
+
+
+# Demo-only refund/reset endpoint. Restores the virtual coin balance to ₱10,000.
+# This does not return real cash or control physical hardware.
+@app.route("/api/refund-reset", methods=["POST"])
+def refund_reset():
+    with machine.lock:
+        machine.balance = INITIAL_BALANCE
+        new_balance = machine.balance
+
+    return jsonify({
+        "success": True,
+        "message": f"Demo coin balance restored to ₱{new_balance:,.2f}. No real cash was refunded.",
+        "remaining_coin_balance": new_balance
+    })
+
+
 # Hardware sends a request here after successfully dispensing coins.
 @app.route("/api/exchange", methods=["POST"])
 def record_exchange():
@@ -473,3 +603,4 @@ def record_exchange():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=False)
+
