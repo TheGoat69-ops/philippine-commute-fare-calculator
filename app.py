@@ -307,16 +307,30 @@ PAGE = """
         </div>
 
         <div class="demo-box">
-            <h3>Add Coins (Demo Top-Up)</h3>
-            <p class="subtitle">Simulation only. No real GCash payment is made.</p>
+            <h3>GCash Payment / Coin Dispensing (Demo)</h3>
+            <p class="subtitle">Simulated GCash payment. A ₱3.00 service fee is deducted, and the remaining amount is dispensed as coins. No real payment is made.</p>
             <form id="topup-form">
-                <label for="topup-amount">Choose top-up amount:</label>
+                <label for="topup-amount">GCash payment amount (₱):</label>
                 <select id="topup-amount" name="amount" required>
                     <option value="50">₱50.00</option>
                     <option value="100">₱100.00</option>
                     <option value="200">₱200.00</option>
                 </select>
-                <button id="topup-button" type="submit">Add Demo Coins</button>
+                <div class="result" id="gcash-dispense-preview">
+                    <div class="balance-row">
+                        <span>GCash payment</span>
+                        <strong id="gcash-payment-display">₱50.00</strong>
+                    </div>
+                    <div class="balance-row">
+                        <span>Service fee</span>
+                        <strong>−₱3.00</strong>
+                    </div>
+                    <div class="balance-row">
+                        <span><strong>Coins to be dispensed</strong></span>
+                        <strong id="gcash-coins-display">₱47.00</strong>
+                    </div>
+                </div>
+                <button id="topup-button" type="submit">Pay with GCash / Dispense Coins</button>
             </form>
             <div id="topup-message" class="message" role="status" aria-live="polite"></div>
         </div>
@@ -347,6 +361,18 @@ document.getElementById("exchange-amount").addEventListener(
     "input", updateDispensePreview
 );
 updateDispensePreview();
+
+function updateGcashDispensePreview() {
+    const payment = Number(document.getElementById("topup-amount").value);
+    document.getElementById("gcash-payment-display").textContent = formatPeso(payment);
+    document.getElementById("gcash-coins-display").textContent =
+        formatPeso(Math.max(0, payment - 3));
+}
+
+document.getElementById("topup-amount").addEventListener(
+    "change", updateGcashDispensePreview
+);
+updateGcashDispensePreview();
 
 async function updateBalance() {
     try {
@@ -476,13 +502,18 @@ document.getElementById("topup-form").addEventListener("submit", async function(
         document.getElementById("balance").textContent = formatPeso(data.remaining_coin_balance);
         document.getElementById("balance-small").textContent = formatPeso(data.remaining_coin_balance);
         message.className = "message success";
-        message.textContent = data.message + " New balance: " + formatPeso(data.remaining_coin_balance);
+        message.textContent =
+            "GCash payment: " + formatPeso(data.payment_amount) +
+            " | Service fee: ₱3.00 | Coins dispensed: " +
+            formatPeso(data.dispensed_amount) +
+            " | Remaining machine balance: " +
+            formatPeso(data.remaining_coin_balance);
     } catch (error) {
         message.className = "message failure";
         message.textContent = "Could not contact the server. Please try again.";
     } finally {
         button.disabled = false;
-        button.textContent = "Add Demo Coins";
+        button.textContent = "Pay with GCash / Dispense Coins";
     }
 });
 
@@ -582,14 +613,34 @@ def demo_topup():
             "message": "Choose a valid demo top-up: ₱50, ₱100, or ₱200."
         }), 400
 
-    with machine.lock:
-        machine.balance = round(machine.balance + amount, 2)
-        new_balance = machine.balance
+    service_fee = 3.00
+    dispensed_amount = round(amount - service_fee, 2)
+
+    if dispensed_amount <= 0:
+        return jsonify({
+            "success": False,
+            "message": "The GCash payment must be greater than the ₱3.00 service fee.",
+            "remaining_coin_balance": machine.get_balance()
+        }), 400
+
+    # A simulated GCash payment makes the machine release coins.
+    # Therefore, subtract the dispensed coin value from machine inventory.
+    success, message = machine.exchange_bill(dispensed_amount)
+
+    if not success:
+        return jsonify({
+            "success": False,
+            "message": message,
+            "remaining_coin_balance": machine.get_balance()
+        }), 400
 
     return jsonify({
         "success": True,
-        "message": f"Demo top-up of ₱{amount:.2f} added. No real payment was made.",
-        "remaining_coin_balance": new_balance
+        "message": "Demo GCash payment completed. ₱3.00 service fee deducted. No real payment was made.",
+        "payment_amount": amount,
+        "service_fee": service_fee,
+        "dispensed_amount": dispensed_amount,
+        "remaining_coin_balance": machine.get_balance()
     })
 
 
