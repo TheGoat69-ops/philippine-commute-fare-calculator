@@ -274,7 +274,26 @@ PAGE = """
             <form id="exchange-form">
                 <label for="exchange-amount">Amount to exchange (₱):</label>
                 <input id="exchange-amount" name="amount" type="number"
-                       min="0.01" step="0.01" value="50.00" required>
+                       min="3.01" step="0.01" value="50.00" required>
+
+                <div class="result" id="dispense-preview">
+                    <div class="balance-row">
+                        <span>Transaction amount</span>
+                        <strong id="preview-amount">₱50.00</strong>
+                    </div>
+                    <div class="balance-row">
+                        <span>Service fee</span>
+                        <strong>−₱3.00</strong>
+                    </div>
+                    <div class="balance-row">
+                        <span><strong>Coins to be dispensed</strong></span>
+                        <strong id="preview-coins">₱47.00</strong>
+                    </div>
+                </div>
+                <p class="subtitle">
+                    A fixed ₱3.00 fee is deducted from each successful transaction.
+                    The remaining amount is the value of coins to be dispensed.
+                </p>
                 <button id="exchange-button" type="submit">Test Exchange</button>
             </form>
             <div id="exchange-message" class="message" role="status" aria-live="polite"></div>
@@ -313,6 +332,22 @@ function formatPeso(value) {
     });
 }
 
+// Show the expected coin payout before the user submits the exchange.
+function updateDispensePreview() {
+    const amount = Number(document.getElementById("exchange-amount").value);
+    const validAmount = Number.isFinite(amount) && amount > 3;
+
+    document.getElementById("preview-amount").textContent =
+        formatPeso(validAmount ? amount : 0);
+    document.getElementById("preview-coins").textContent =
+        formatPeso(validAmount ? amount - 3 : 0);
+}
+
+document.getElementById("exchange-amount").addEventListener(
+    "input", updateDispensePreview
+);
+updateDispensePreview();
+
 async function updateBalance() {
     try {
         const response = await fetch("/api/balance");
@@ -339,9 +374,9 @@ document.getElementById("exchange-form").addEventListener("submit", async functi
     message.className = "message";
     message.textContent = "";
 
-    if (!Number.isFinite(amount) || amount <= 0 || Math.round(amount * 100) !== amount * 100) {
+    if (!Number.isFinite(amount) || amount <= 3 || Math.round(amount * 100) !== amount * 100) {
         message.className = "message failure";
-        message.textContent = "Enter a valid amount greater than zero, with up to 2 decimal places.";
+        message.textContent = "Enter an amount greater than ₱3.00, with up to 2 decimal places.";
         return;
     }
 
@@ -369,8 +404,13 @@ document.getElementById("exchange-form").addEventListener("submit", async functi
         document.getElementById("balance").textContent = formatPeso(data.remaining_coin_balance);
         document.getElementById("balance-small").textContent = formatPeso(data.remaining_coin_balance);
         message.className = "message success";
-        message.textContent = data.message + " New balance: " + formatPeso(data.remaining_coin_balance);
-        amountInput.value = "";
+        message.textContent =
+            "Transaction: " + formatPeso(data.transaction_amount) +
+            " | Service fee: ₱3.00 | Coins dispensed: " +
+            formatPeso(data.dispensed_amount) +
+            " | New balance: " + formatPeso(data.remaining_coin_balance);
+        amountInput.value = "50.00";
+        updateDispensePreview();
     } catch (error) {
         message.className = "message failure";
         message.textContent = "Could not contact the server. Please try again.";
@@ -586,7 +626,19 @@ def record_exchange():
             "message": "Invalid exchange amount."
         }), 400
 
-    success, message = machine.exchange_bill(amount)
+    # Deduct the ₱3.00 service fee from the amount being exchanged.
+    # Only the remaining amount is dispensed as coins and removed from inventory.
+    service_fee = 3.00
+    dispensed_amount = round(amount - service_fee, 2)
+
+    if dispensed_amount <= 0:
+        return jsonify({
+            "success": False,
+            "message": "The transaction amount must be greater than ₱3.00.",
+            "remaining_coin_balance": machine.get_balance()
+        }), 400
+
+    success, message = machine.exchange_bill(dispensed_amount)
 
     if not success:
         return jsonify({
@@ -597,7 +649,10 @@ def record_exchange():
 
     return jsonify({
         "success": True,
-        "message": message,
+        "message": "Exchange completed. ₱3.00 service fee deducted.",
+        "transaction_amount": amount,
+        "service_fee": service_fee,
+        "dispensed_amount": dispensed_amount,
         "remaining_coin_balance": machine.get_balance()
     })
 
