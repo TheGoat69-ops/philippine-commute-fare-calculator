@@ -35,12 +35,12 @@ machine = CashMachine()
 
 prices = {
     "JEEPNEY": {
-        "base_fare": 13.00,
+        "base_fare": 14.00,
         "included_km": 10,
         "extra_per_km": 3.00
     },
     "TRICYCLE": {
-        "base_fare": 10.00,
+        "base_fare": 12.00,
         "included_km": 10,
         "extra_per_km": 2.00
     },
@@ -537,6 +537,9 @@ def home():
 
                 if discounted:
                     fare *= 0.80
+                    # Jeepney and tricycle discounted minimum fare is ₱12.00.
+                    if selected_vehicle in ("JEEPNEY", "TRICYCLE"):
+                        fare = max(fare, 12.00)
 
             except ValueError:
                 error = "Enter a valid distance of zero or more kilometers."
